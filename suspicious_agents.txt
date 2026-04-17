@@ -1,0 +1,339 @@
+# Список подозрительных User-Agent для детектирования
+# Каждая строка содержит ключевое слово или фразу (регистронезависимый поиск)
+# Пустые строки и строки начинающиеся с # игнорируются
+
+# Стандартные инструменты командной строки
+curl
+wget
+
+# Языки программирования и библиотеки
+python
+go-http-client
+
+# Сканирующие инструменты
+scanner
+zgrab
+
+# Боты и краулеры
+bot
+spider
+crawler
+
+# Сетевые сканеры и исследователи
+internetmeasurement
+palo alto networks
+
+# Дополнительные подозрительные агенты из логов
+masscan
+nmap
+nikto
+sqlmap
+dirbuster
+gobuster
+ffuf
+hydra
+medusa
+nessus
+openvas
+burpsuite
+wpscan
+joomscan
+droopescan
+nuclei
+httpx
+subfinder
+amass
+theharvester
+recon-ng
+maltego
+shodan
+censys
+binaryedge
+onyphe
+fullhunt
+searchsploit
+metasploit
+cobalt
+empire
+mimikatz
+bloodhound
+crackmapexec
+impacket
+responder
+ntlmrelay
+kerberoast
+rubeus
+seatbelt
+sharpup
+ghostpack
+donut
+sliver
+havoc
+merlin
+mythic
+covenant
+brute-ratel
+quasar
+remcos
+asyncrat
+njrat
+formbook
+redline
+lokibot
+trickbot
+emotet
+wannacry
+notpetya
+locky
+cryptolocker
+teslacrypt
+sodinokibi
+revil
+conti
+hive
+blackcat
+alphv
+lockbit
+ransomexx
+netwalker
+maze
+egregor
+sekurad
+doppelpaymer
+bitpaymer
+dridex
+azorult
+vidar
+ratankba
+snakekeylogger
+agenttesla
+nanocore
+njrat
+xtrat
+darkcomet
+blackshades
+predator
+remcosrat
+locus
+cybergate
+xtreme
+njrat
+plugx
+gh0st
+poisonivy
+blackenergy
+shark
+rathole
+darkshell
+backdoor
+trojan
+malware
+virus
+worm
+rootkit
+keylogger
+spyware
+adware
+ransomware
+cryptominer
+miner
+coinhive
+cryptonight
+monero
+bitcoin
+ethereum
+litecoin
+dogecoin
+zcash
+dash
+ripple
+cardano
+polkadot
+chainlink
+uniswap
+pancakeswap
+sushiswap
+compound
+aave
+maker
+yearn
+curve
+balancer
+bancor
+kyber
+0x
+dydx
+perpetual
+synthetix
+uma
+badger
+alpha
+cream
+harvest
+pickle
+cover
+value
+basis
+emptyset
+frax
+fei
+olympus
+klima
+wonderland
+time
+memo
+spell
+ice
+mim
+ust
+luna
+anchor
+terra
+jasmine
+athena
+hermes
+aphrodite
+zeus
+poseidon
+hades
+demeter
+hera
+artemis
+apollo
+athena
+hephaestus
+ares
+dionysus
+pan
+satyr
+nymph
+dryad
+naiad
+oceanid
+pleiad
+hyad
+atlas
+prometheus
+epimetheus
+io
+europa
+ganymede
+callisto
+titan
+rhea
+dione
+tethys
+enceladus
+mimas
+hyperion
+iapetus
+phoebe
+janus
+epimetheus
+pandora
+prometheus
+atlas
+helene
+calypso
+telesto
+polydeuces
+methone
+pallene
+anthe
+aegeon
+daphnis
+pan
+argus
+hermes
+iris
+hebe
+ganymedes
+cupido
+belinda
+desdemona
+juliet
+portia
+rosalind
+cressida
+bianca
+nereid
+proteus
+larissa
+galatea
+despina
+thalassa
+naiad
+halimede
+psamathe
+sao
+laomedeia
+neso
+glauce
+thalimede
+ Autonoe
+ Themisto
+ Callirrhoe
+ Megaclite
+ Taygete
+ Chaldene
+ Harpalyke
+ Kalyke
+ Iocaste
+ Erinome
+ Praxidike
+ Thyone
+ Hermippe
+ Eurydome
+ Pasithee
+ Hegemone
+ Mneme
+ Thelxinoe
+ Euportie
+ Orthosie
+ Euanthe
+ Euporie
+ Sponde
+ Kale
+ Pasiphae
+ Carme
+ Ananke
+ Leda
+ Himalia
+ Elara
+ Dia
+ Carpo
+ Valetudo
+ Ersa
+ Pandia
+ Arché
+ Callirrhoe
+ Kore
+ Herse
+ S/2003 J 5
+ S/2016 J 1
+ S/2017 J 1
+ S/2017 J 2
+ S/2017 J 3
+ S/2017 J 4
+ S/2017 J 5
+ S/2017 J 6
+ S/2017 J 7
+ S/2017 J 8
+ S/2017 J 9
+ S/2018 J 1
+ S/2018 J 2
+ S/2018 J 3
+ S/2018 J 4
+ S/2019 J 1
+ S/2019 J 2
+ S/2019 J 3
+ S/2020 J 1
+ S/2020 J 2
+ S/2021 J 1
+ S/2021 J 2
+ S/2021 J 3
+ S/2022 J 1
+ S/2022 J 2
+ S/2023 J 1
+ S/2023 J 2
+ S/2024 J 1
