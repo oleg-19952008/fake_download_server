@@ -501,9 +501,32 @@ namespace FakeDownloadServer
         {
             if (string.IsNullOrEmpty(ip)) return false;
             if (ip == "::1" || ip == "127.0.0.1" || ip == "localhost") return true;
-            if (ip.StartsWith("192.168.") || ip.StartsWith("10.") || ip.StartsWith("172.16.") || ip.StartsWith("172.17.") || ip.StartsWith("172.18.") || ip.StartsWith("172.19.") || ip.StartsWith("172.20.") || ip.StartsWith("172.21.") || ip.StartsWith("172.22.") || ip.StartsWith("172.23.") || ip.StartsWith("172.24.") || ip.StartsWith("172.25.") || ip.StartsWith("172.26.") || ip.StartsWith("172.27.") || ip.StartsWith("172.28.") || ip.StartsWith("172.29.") || ip.StartsWith("172.30.") || ip.StartsWith("172.31.")) return true;
-            if (ip.StartsWith("2.2.2.")) return true;
+            
+            // IPv6 link-local и loopback
             if (ip.StartsWith("fe80::") || ip.StartsWith("::ffff:127.0.0.1")) return true;
+            
+            // Парсим IPv4 адрес для проверки приватных диапазонов
+            if (IPAddress.TryParse(ip, out var address))
+            {
+                // Проверяем, является ли адрес IPv4
+                if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+                {
+                    byte[] bytes = address.GetAddressBytes();
+                    
+                    // 10.0.0.0/8
+                    if (bytes[0] == 10) return true;
+                    
+                    // 172.16.0.0/12 (172.16.0.0 - 172.31.255.255)
+                    if (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) return true;
+                    
+                    // 192.168.0.0/16
+                    if (bytes[0] == 192 && bytes[1] == 168) return true;
+                    
+                    // Дополнительный диапазон 2.2.2.x
+                    if (bytes[0] == 2 && bytes[1] == 2 && bytes[2] == 2) return true;
+                }
+            }
+            
             return false;
         }
 
