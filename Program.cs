@@ -38,6 +38,106 @@ namespace FakeDownloadServer
         private static CancellationTokenSource serverCts = new CancellationTokenSource();
         private static HttpListener listener;
         private static readonly object listenerLock = new object();
+        private static List<string> suspiciousUserAgents = new List<string>();
+        private static FileSystemWatcher fileWatcher;
+        private static readonly object agentsLock = new object();
+
+        /// <summary>
+        /// Загружает список подозрительных User-Agent из файла suspicious_agents.txt
+        /// </summary>
+        private static void LoadSuspiciousUserAgents()
+        {
+            try
+            {
+                string agentsFile = "suspicious_agents.txt";
+                if (File.Exists(agentsFile))
+                {
+                    var newAgents = File.ReadAllLines(agentsFile, Encoding.UTF8)
+                        .Where(line => !string.IsNullOrWhiteSpace(line) && !line.TrimStart().StartsWith("#"))
+                        .Select(line => line.Trim().ToLower())
+                        .ToList();
+                    
+                    lock (agentsLock)
+                    {
+                        suspiciousUserAgents = newAgents;
+                    }
+                    Log($"Загружено {suspiciousUserAgents.Count} подозрительных User-Agent");
+                }
+                else
+                {
+                    Log("Файл suspicious_agents.txt не найден! Используется стандартный список.");
+                    // Стандартный список если файл не найден
+                    var defaultAgents = new List<string>
+                    {
+                        "curl", "wget", "python", "scanner", "bot", 
+                        "spider", "crawler", "zgrab", "go-http-client",
+                        "internetmeasurement", "palo alto networks"
+                    };
+                    lock (agentsLock)
+                    {
+                        suspiciousUserAgents = defaultAgents;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LogErrorToFile("Ошибка загрузки списка подозрительных User-Agent", ex);
+                var defaultAgents = new List<string>
+                {
+                    "curl", "wget", "python", "scanner", "bot", 
+                    "spider", "crawler", "zgrab", "go-http-client",
+                    "internetmeasurement", "palo alto networks"
+                };
+                lock (agentsLock)
+                {
+                    suspiciousUserAgents = defaultAgents;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Инициализирует наблюдение за изменениями в файле suspicious_agents.txt
+        /// и автоматически перезагружает список при изменении файла.
+        /// </summary>
+        private static void InitializeFileWatcher()
+        {
+            try
+            {
+                string agentsFile = "suspicious_agents.txt";
+                string directory = Path.GetDirectoryName(Path.GetFullPath(agentsFile)) ?? Directory.GetCurrentDirectory();
+                string fileName = Path.GetFileName(agentsFile);
+
+                fileWatcher = new FileSystemWatcher(directory, fileName);
+                fileWatcher.NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.CreationTime;
+                fileWatcher.Changed += OnSuspiciousAgentsFileChanged;
+                fileWatcher.EnableRaisingEvents = true;
+                
+                Log($"Мониторинг изменений файла {agentsFile} включен");
+            }
+            catch (Exception ex)
+            {
+                LogErrorToFile("Ошибка инициализации FileWatcher", ex);
+            }
+        }
+
+        /// <summary>
+        /// Обработчик события изменения файла suspicious_agents.txt.
+        /// Перезагружает список подозрительных User-Agent при изменении файла.
+        /// </summary>
+        private static void OnSuspiciousAgentsFileChanged(object sender, FileSystemEventArgs e)
+        {
+            try
+            {
+                // Небольшая задержка чтобы файл полностью записался
+                System.Threading.Thread.Sleep(100);
+                Log($"Обнаружено изменение файла suspicious_agents.txt. Перезагрузка списка...");
+                LoadSuspiciousUserAgents();
+            }
+            catch (Exception ex)
+            {
+                LogErrorToFile("Ошибка при обработке изменения файла suspicious_agents.txt", ex);
+            }
+        }
 
         /// <summary>
         /// Определяет, является ли текущее время ночным (в интервале ночного режима).
@@ -163,6 +263,8 @@ namespace FakeDownloadServer
 
             banManager = new BanManager("bans.ini");
             LoadRandomHeaders();
+            LoadSuspiciousUserAgents();
+            InitializeFileWatcher();
 
             const int port = 5000;
             listener = new HttpListener();
@@ -265,6 +367,15 @@ namespace FakeDownloadServer
             }
 
             Log($"Сервер останавливается...");
+            
+            // Останавливаем FileWatcher
+            if (fileWatcher != null)
+            {
+                fileWatcher.EnableRaisingEvents = false;
+                fileWatcher.Dispose();
+                Log("Мониторинг файла suspicious_agents.txt остановлен");
+            }
+            
             lock (listenerLock)
             {
                 if (listener != null && listener.IsListening)
@@ -492,16 +603,26 @@ namespace FakeDownloadServer
             string userAgent = request.UserAgent?.ToLower() ?? "";
             Log($"Проверка User-Agent: {userAgent}");
 
-            if (userAgent.Contains("curl") ||
-                userAgent.Contains("wget") ||
-                userAgent.Contains("python") ||
-                userAgent.Contains("scanner") ||
-                userAgent.Contains("bot") ||
-                userAgent.Contains("spider") ||
-                userAgent.Contains("crawler") ||
-                userAgent.Length == 0)
+            // Проверка по списку из файла (с блокировкой для потокобезопасности)
+            List<string> agentsToCheck;
+            lock (agentsLock)
             {
-                Log($"Запрос помечен как подозрительный");
+                agentsToCheck = new List<string>(suspiciousUserAgents);
+            }
+            
+            foreach (var suspiciousAgent in agentsToCheck)
+            {
+                if (userAgent.Contains(suspiciousAgent))
+                {
+                    Log($"Запрос помечен как подозрительный (UA: {suspiciousAgent})");
+                    return true;
+                }
+            }
+
+            // Проверка пустого User-Agent
+            if (userAgent.Length == 0)
+            {
+                Log($"Запрос помечен как подозрительный (пустой UA)");
                 return true;
             }
 
