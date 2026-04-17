@@ -24,7 +24,8 @@ namespace FakeDownloadServer
         private static readonly object logLock = new object();
         private static BanManager banManager;
         private static List<string> randomHeaders = new List<string>();
-        private static Random random = new Random();
+        // Используем ThreadLocal для потокобезопасного Random на .NET Framework 4.8
+        private static readonly ThreadLocal<Random> random = new ThreadLocal<Random>(() => new Random());
         private static readonly object headerLock = new object();
         private static CancellationTokenSource serverCts = new CancellationTokenSource();
         private static HttpListener listener;
@@ -119,7 +120,7 @@ namespace FakeDownloadServer
             {
                 if (randomHeaders.Count == 0)
                     return "FILE NOT FOUND";
-                return randomHeaders[random.Next(randomHeaders.Count)];
+                return randomHeaders[random.Value.Next(randomHeaders.Count)];
             }
         }
         static async Task Main(string[] args)
@@ -271,7 +272,6 @@ namespace FakeDownloadServer
             var request = context.Request;
             var response = context.Response;
             var startTime = DateTime.Now;
-            bool downloadStarted = false;
             string clientIp = request.RemoteEndPoint?.Address?.ToString() ?? "Unknown";
 
             Log($"Обработка запроса от {clientIp} на {request.Url.AbsolutePath}");
@@ -303,7 +303,23 @@ namespace FakeDownloadServer
                         Log($"Перезапуск приложения...");
                         // Задержка перед перезапуском, чтобы редирект успел обработаться
                         await Task.Delay(1000); // 1 секунда задержки
-                        System.Diagnostics.Process.Start(System.Reflection.Assembly.GetExecutingAssembly().Location);
+                        
+                        try
+                        {
+                            string exePath = System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName;
+                            if (!string.IsNullOrEmpty(exePath) && System.IO.File.Exists(exePath))
+                            {
+                                System.Diagnostics.Process.Start(exePath);
+                            }
+                            else
+                            {
+                                Log("Ошибка: не удалось получить путь к исполняемому файлу");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            LogErrorToFile("Ошибка при перезапуске приложения", ex);
+                        }
 
                         Environment.Exit(0);
                     }
@@ -323,18 +339,7 @@ namespace FakeDownloadServer
                 string requestPath = request.Url.AbsolutePath;
                 if (!IsWhiteListed(requestPath))
                 {
-                    if (isLocal)
-                    {
-                        Log($"Локальный клиент: {clientIp} -> {requestPath} (не в белом списке)");
-
-                        response.StatusCode = 404;
-                        byte[] buffer = Encoding.UTF8.GetBytes("Ошибка: путь не найден. Проверьте URL.");
-                        response.ContentType = "text/plain; charset=utf-8";
-                        response.ContentLength64 = buffer.Length;
-                        await response.OutputStream.WriteAsync(buffer, 0, buffer.Length).ConfigureAwait(false);
-                        return;
-                    }
-
+                    // Для всех IP (включая локальные) бан за запрос вне белого списка
                     var clientTracking = banManager.GetOrCreateClientTracking(clientIp);
                     clientTracking.BadRequestCount++;
 
@@ -396,20 +401,12 @@ namespace FakeDownloadServer
         private static bool IsWhiteListed(string path)
         {
             Log($"Проверка белого списка: {path}");
+            
+            // Проверяем точное совпадение с путями из белого списка
             if (WhiteListedPaths.Contains(path))
             {
                 Log($"Путь {path} в белом списке");
                 return true;
-            }
-
-            if (path.StartsWith("/download/"))
-            {
-                string sizePart = path.Substring("/download/".Length);
-                if (int.TryParse(sizePart, out int megabytes) && FileSizes.Contains(megabytes * 1024L * 1024))
-                {
-                    Log($"Путь {path} валидный для скачивания");
-                    return true;
-                }
             }
 
             Log($"Путь {path} НЕ в белом списке");
@@ -556,6 +553,13 @@ namespace FakeDownloadServer
                         int endPos = (int)(totalSize - sent - endData.Length);
                         if (endPos >= 0)
                             Array.Copy(endData, 0, buffer, endPos, endData.Length);
+                        else
+                        {
+                            // Если endPos < 0, копируем только часть endData
+                            int copyStart = endData.Length + endPos; // отрицательный endPos делает это меньше чем Length
+                            if (copyStart < 0) copyStart = 0;
+                            Array.Copy(endData, copyStart, buffer, 0, endData.Length - copyStart);
+                        }
                     }
 
                     await response.OutputStream.WriteAsync(buffer, 0, toWrite);
@@ -781,6 +785,35 @@ namespace FakeDownloadServer
                 catch (Exception ex)
                 {
                     Console.WriteLine($"Ошибка сохранения файла банов: {ex.Message}");
+                }
+            }
+
+            // Очистка старых записей отслеживания для предотвращения утечки памяти
+            public void CleanupOldTracking(int maxAgeMinutes = 60)
+            {
+                lock (_lock)
+                {
+                    var now = DateTime.Now;
+                    var keysToRemove = new List<string>();
+                    
+                    foreach (var kvp in _clientTracking)
+                    {
+                        // Если счетчик ошибок был сброшен или запись очень старая - удаляем
+                        if (kvp.Value.BadRequestCount == 0)
+                        {
+                            keysToRemove.Add(kvp.Key);
+                        }
+                    }
+                    
+                    foreach (var key in keysToRemove)
+                    {
+                        _clientTracking.Remove(key);
+                    }
+                    
+                    if (keysToRemove.Count > 0)
+                    {
+                        Log($"Очищено {keysToRemove.Count} старых записей отслеживания");
+                    }
                 }
             }
         }
