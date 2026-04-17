@@ -11,13 +11,14 @@ namespace FakeDownloadServer
 {
     class Program
     {
-        private static bool isInSleepMode = false; // Флаг для отслеживания спящего режима
+        private static readonly object nightModeLock = new object();
+        private static bool isInSleepMode = false;
+        private static bool isForceRunRequested = false;
 
         private static readonly long[] FileSizes = { 100 * 1024L * 1024, 200 * 1024L * 1024, 500 * 1024L * 1024, 1000 * 1024L * 1024 };
         private static bool isNightModeEnabled = true;
         private static int nightStartHour = 1;
         private static int nightEndHour = 6;
-        private static bool forceRunAtNight = false;
         private static readonly string[] WhiteListedPaths = { "/", "/favicon.ico", "/download/100", "/download/200", "/download/500", "/download/1000", "/748_dark" };
         private static string logFileName;
         private static readonly object logLock = new object();
@@ -45,7 +46,7 @@ namespace FakeDownloadServer
 
         private static async Task WaitForDayTime()
         {
-            while (IsNightTime() && !forceRunAtNight && !serverCts.Token.IsCancellationRequested)
+            while (IsNightTime() && !isForceRunRequested && !serverCts.Token.IsCancellationRequested)
             {
                 Log($"НОЧНОЙ РЕЖИМ: Сервер отключен с {nightStartHour}:00 до {nightEndHour}:00");
                 Print("Нажмите 'Y' для принудительного запуска или любую другую клавишу для продолжения ожидания...");
@@ -72,7 +73,10 @@ namespace FakeDownloadServer
                         var key = keyTask.Result;
                         if (key.KeyChar == 'Y' || key.KeyChar == 'y')
                         {
-                            forceRunAtNight = true;
+                            lock (nightModeLock)
+                            {
+                                isForceRunRequested = true;
+                            }
                             Log($"ПРИНУДИТЕЛЬНЫЙ ЗАПУСК: Сервер запускается в ночное время");
                             LogToFile("ПРИНУДИТЕЛЬНЫЙ ЗАПУСК: Сервер запущен вручную в ночное время");
                             break;
@@ -153,20 +157,36 @@ namespace FakeDownloadServer
                 HttpListenerContext context = null;
                 try
                 {
-                    if (isNightModeEnabled && IsNightTime() && !forceRunAtNight)
+                    bool isNightTimeNow = IsNightTime();
+                    bool shouldSleep = isNightModeEnabled && isNightTimeNow;
+                    
+                    lock (nightModeLock)
+                    {
+                        shouldSleep = shouldSleep && !isForceRunRequested;
+                    }
+
+                    if (shouldSleep)
                     {
                         if (!isInSleepMode)
                         {
                             Log($"НОЧНОЙ РЕЖИМ: Обработка запросов приостановлена");
                             isInSleepMode = true;
                         }
-                        await Task.Delay(1000); // Задержка, чтобы не нагружать цикл
-                        continue; // Пропускаем обработку запросов в ночное время
+                        await Task.Delay(1000, serverCts.Token);
+                        continue;
                     }
                     else if (isInSleepMode)
                     {
                         Log($"ДНЕВНОЙ РЕЖИМ: Обработка запросов возобновлена");
                         isInSleepMode = false;
+                        
+                        lock (nightModeLock)
+                        {
+                            if (!isNightTimeNow)
+                            {
+                                isForceRunRequested = false;
+                            }
+                        }
                     }
 
                     Log($"Ожидание нового запроса...");
@@ -210,49 +230,27 @@ namespace FakeDownloadServer
 
         private static async Task CheckNightModeAsync()
         {
-            bool sleepMessageDisplayed = false; // Флаг для отображения сообщения о спящем режиме
-
             while (!serverCts.Token.IsCancellationRequested)
             {
                 try
                 {
-                    await Task.Delay(1000, serverCts.Token);
+                    await Task.Delay(5000, serverCts.Token);
 
-                    if (isNightModeEnabled && IsNightTime() && !forceRunAtNight)
+                    bool isNightTimeNow = IsNightTime();
+                    bool shouldSleep = isNightModeEnabled && isNightTimeNow;
+                    
+                    lock (nightModeLock)
                     {
-                        if (!sleepMessageDisplayed)
-                        {
-                            Log($"НОЧНОЙ РЕЖИМ: Сервер в спящем режиме с {nightStartHour}:00 до {nightEndHour}:00");
-                            Print("Нажмите любую клавишу для возобновления работы сервера...");
-                            sleepMessageDisplayed = true;
-                        }
-
-                        var keyTask = Task.Run(() =>
-                        {
-                            try
-                            {
-                                return Console.ReadKey(true);
-                            }
-                            catch
-                            {
-                                return new ConsoleKeyInfo();
-                            }
-                        }, serverCts.Token);
-
-                        var delayTask = Task.Delay(Timeout.Infinite, serverCts.Token);
-                        var completedTask = await Task.WhenAny(keyTask, delayTask);
-
-                        if (completedTask == keyTask && !serverCts.Token.IsCancellationRequested)
-                        {
-                            forceRunAtNight = true;
-                            Log($"ПРИНУДИТЕЛЬНЫЙ ЗАПУСК: Сервер возобновлён вручную");
-                            sleepMessageDisplayed = false; // Сбрасываем, чтобы показать сообщение снова при следующей ночи
-                        }
+                        shouldSleep = shouldSleep && !isForceRunRequested;
                     }
-                    else if (sleepMessageDisplayed)
+
+                    if (shouldSleep && !isInSleepMode)
                     {
-                        sleepMessageDisplayed = false; // Сбрасываем, если ночь закончилась
-                        forceRunAtNight = false; // Сбрасываем принудительный запуск
+                        Log($"НОЧНОЙ РЕЖИМ: Сервер в спящем режиме с {nightStartHour}:00 до {nightEndHour}:00");
+                        Print("Нажмите 'Y' для принудительного запуска...");
+                    }
+                    else if (!shouldSleep && isInSleepMode)
+                    {
                         Log($"ДНЕВНОЙ РЕЖИМ: Сервер работает нормально");
                     }
                 }
