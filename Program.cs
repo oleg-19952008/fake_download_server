@@ -41,6 +41,8 @@ namespace FakeDownloadServer
         private static List<string> suspiciousUserAgents = new List<string>();
         private static FileSystemWatcher fileWatcher;
         private static readonly object agentsLock = new object();
+        /// <summary>Список размеров файлов в байтах для генерации главной страницы.</summary>
+        private static readonly List<long> FileSizes = new List<long> { 100 * 1024 * 1024, 200 * 1024 * 1024, 500 * 1024 * 1024, 1000 * 1024 * 1024 };
 
         /// <summary>
         /// Загружает список подозрительных User-Agent из файла suspicious_agents.txt
