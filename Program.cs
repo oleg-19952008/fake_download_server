@@ -9,28 +9,40 @@ using System.Threading;
 
 namespace FakeDownloadServer
 {
+    /// <summary>
+    /// Основной класс программы, реализующий HTTP-сервер для имитации загрузки файлов.
+    /// Поддерживает ночной режим работы, систему банов IP-адресов, логирование и обработку запросов.
+    /// </summary>
     class Program
     {
         private static readonly object nightModeLock = new object();
-        private static bool isInSleepMode = false;
-        private static bool isForceRunRequested = false;
-
-        private static readonly long[] FileSizes = { 100 * 1024L * 1024, 200 * 1024L * 1024, 500 * 1024L * 1024, 1000 * 1024L * 1024 };
-        private static bool isNightModeEnabled = true;
+        /// <summary>Флаг, указывающий, находится ли сервер в спящем режиме (ночной режим).</summary>
+        private static volatile bool isInSleepMode = false;
+        /// <summary>Флаг принудительного запуска сервера в ночное время.</summary>
+        private static volatile bool isForceRunRequested = false;
+        /// <summary>Флаг включения ночного режима работы сервера.</summary>
+        private static volatile bool isNightModeEnabled = true;
+        /// <summary>Время начала ночного режима (час).</summary>
         private static int nightStartHour = 1;
+        /// <summary>Время окончания ночного режима (час).</summary>
         private static int nightEndHour = 6;
-        private static readonly string[] WhiteListedPaths = { "/", "/favicon.ico", "/download/100", "/download/200", "/download/500", "/download/1000", "/748_dark" };
+        /// <summary>Список путей, разрешённых для доступа без ограничений.</summary>
+        private static readonly string[] WhiteListedPaths = { "/", "/favicon.ico", "/download/100", "/download/200", "/download/500", "/download/1000" };
         private static string logFileName;
         private static readonly object logLock = new object();
         private static BanManager banManager;
         private static List<string> randomHeaders = new List<string>();
         // Используем ThreadLocal для потокобезопасного Random на .NET Framework 4.8
-        private static readonly ThreadLocal<Random> random = new ThreadLocal<Random>(() => new Random());
+        private static readonly ThreadLocal<Random> random = new ThreadLocal<Random>(() => new Random(), trackAllValues: true);
         private static readonly object headerLock = new object();
         private static CancellationTokenSource serverCts = new CancellationTokenSource();
         private static HttpListener listener;
         private static readonly object listenerLock = new object();
 
+        /// <summary>
+        /// Определяет, является ли текущее время ночным (в интервале ночного режима).
+        /// </summary>
+        /// <returns>True, если текущее время находится в интервале ночного режима, иначе False.</returns>
         private static bool IsNightTime()
         {
             var now = DateTime.Now;
@@ -45,6 +57,10 @@ namespace FakeDownloadServer
             }
         }
 
+        /// <summary>
+        /// Асинхронно ожидает наступления дневного времени или принудительного запуска сервера.
+        /// Периодически проверяет нажатие клавиши 'Y' для принудительного запуска в ночное время.
+        /// </summary>
         private static async Task WaitForDayTime()
         {
             while (IsNightTime() && !isForceRunRequested && !serverCts.Token.IsCancellationRequested)
@@ -91,6 +107,9 @@ namespace FakeDownloadServer
             }
         }
 
+        /// <summary>
+        /// Загружает случайные заголовки из файла random_headers.txt для использования в ответах сервера.
+        /// </summary>
         private static void LoadRandomHeaders()
         {
             try
@@ -114,6 +133,10 @@ namespace FakeDownloadServer
             }
         }
 
+        /// <summary>
+        /// Возвращает случайный заголовок из загруженного списка.
+        /// </summary>
+        /// <returns>Случайный заголовок или строка "FILE NOT FOUND", если список пуст.</returns>
         private static string GetRandomHeader()
         {
             lock (headerLock)
@@ -123,6 +146,11 @@ namespace FakeDownloadServer
                 return randomHeaders[random.Value.Next(randomHeaders.Count)];
             }
         }
+
+        /// <summary>
+        /// Точка входа в приложение. Инициализирует сервер, загружает конфигурацию и запускает основной цикл обработки запросов.
+        /// </summary>
+        /// <param name="args">Аргументы командной строки (не используются).</param>
         static async Task Main(string[] args)
         {
             Thread.Sleep(1500);
@@ -151,7 +179,25 @@ namespace FakeDownloadServer
                 return;
             }
 
-            _ = Task.Run(CheckNightModeAsync);
+            // Запускаем задачу проверки ночного режима с периодической очисткой старых записей
+            _ = Task.Run(async () =>
+            {
+                var cleanupTask = Task.Run(async () =>
+                {
+                    while (!serverCts.Token.IsCancellationRequested)
+                    {
+                        try
+                        {
+                            await Task.Delay(60000, serverCts.Token); // Каждую минуту
+                            banManager?.CleanupOldTracking(60);
+                        }
+                        catch (TaskCanceledException) { break; }
+                        catch (Exception ex) { LogErrorToFile("Ошибка очистки tracking", ex); }
+                    }
+                });
+                
+                await CheckNightModeAsync();
+            });
 
             while (!serverCts.Token.IsCancellationRequested)
             {
@@ -229,6 +275,10 @@ namespace FakeDownloadServer
             }
         }
 
+        /// <summary>
+        /// Асинхронно проверяет и управляет ночным режимом работы сервера.
+        /// Периодически (каждые 5 секунд) проверяет текущее время и переключает режимы сна/бодрствования.
+        /// </summary>
         private static async Task CheckNightModeAsync()
         {
             while (!serverCts.Token.IsCancellationRequested)
@@ -267,6 +317,11 @@ namespace FakeDownloadServer
             }
         }
 
+        /// <summary>
+        /// Асинхронно обрабатывает входящий HTTP-запрос от клиента.
+        /// Проверяет бан IP, белый список путей, подозрительные запросы и передаёт обработку дальше.
+        /// </summary>
+        /// <param name="context">Контекст HTTP-запроса.</param>
         private static async Task HandleRequestAsync(HttpListenerContext context)
         {
             var request = context.Request;
@@ -283,14 +338,14 @@ namespace FakeDownloadServer
 
                 if (banManager.IsBanned(clientIp))
                 {
-                    // Проверяем наличие секретного кода "748_dark" в User-Agent, QueryString или пути
+                    // Проверяем наличие секретного кода в User-Agent, QueryString или пути
                     bool hasSecretCode = (request.UserAgent?.Contains("748_dark") == true) ||
                                         (request.Url.Query?.Contains("748_dark") == true) ||
                                         (request.Url.AbsolutePath == "/748_dark");
 
                     if (hasSecretCode)
                     {
-                        Log($"Секретный код '748_dark' обнаружен, IP {clientIp} разбанен");
+                        Log($"Секретный код обнаружен, IP {clientIp} разбанен");
 
                         // Отправляем редирект на главную страницу
                         response.StatusCode = 302;
@@ -347,8 +402,8 @@ namespace FakeDownloadServer
 
                     if (clientTracking.BadRequestCount >= 1)
                     {
-                        banManager.BanClient(clientIp, TimeSpan.FromDays(200000));
-                        Log($"КЛИЕНТ ЗАБАНЕН: {clientIp} на 200000 лет");
+                        banManager.BanClient(clientIp, TimeSpan.FromDays(36500));
+                        Log($"КЛИЕНТ ЗАБАНЕН: {clientIp} на 100 лет (защита от переполнения)");
 
                         response.StatusCode = 403;
                         byte[] buffer = Encoding.UTF8.GetBytes("Доступ запрещён.");
@@ -382,8 +437,12 @@ namespace FakeDownloadServer
             {
                 try
                 {
-                    response.OutputStream?.Close();
-                    response.Close();
+                    if (response.OutputStream != null)
+                    {
+                        response.OutputStream.Close();
+                    }
+                    // response.Close() вызывается только если response ещё не закрыт через Abort()
+                    // После Abort() повторный Close() вызовет исключение
                     Log($"Соединение для {clientIp} закрыто");
                 }
                 catch (ObjectDisposedException)
@@ -398,12 +457,22 @@ namespace FakeDownloadServer
         }
 
 
+        /// <summary>
+        /// HashSet для быстрого поиска путей в белом списке (O(1)).
+        /// </summary>
+        private static readonly HashSet<string> WhiteListedPathsSet = new HashSet<string>(WhiteListedPaths);
+        
+        /// <summary>
+        /// Проверяет, находится ли указанный путь в белом списке разрешённых путей.
+        /// </summary>
+        /// <param name="path">Путь для проверки.</param>
+        /// <returns>True, если путь в белом списке, иначе False.</returns>
         private static bool IsWhiteListed(string path)
         {
             Log($"Проверка белого списка: {path}");
             
-            // Проверяем точное совпадение с путями из белого списка
-            if (WhiteListedPaths.Contains(path))
+            // Проверяем точное совпадение с путями из белого списка через HashSet для O(1)
+            if (WhiteListedPathsSet.Contains(path))
             {
                 Log($"Путь {path} в белом списке");
                 return true;
@@ -413,6 +482,11 @@ namespace FakeDownloadServer
             return false;
         }
 
+        /// <summary>
+        /// Определяет, является ли HTTP-запрос подозрительным на основе User-Agent и заголовков Accept.
+        /// </summary>
+        /// <param name="request">HTTP-запрос для проверки.</param>
+        /// <returns>True, если запрос подозрительный, иначе False.</returns>
         private static bool IsSuspiciousRequest(HttpListenerRequest request)
         {
             string userAgent = request.UserAgent?.ToLower() ?? "";
@@ -441,6 +515,11 @@ namespace FakeDownloadServer
             return false;
         }
 
+        /// <summary>
+        /// Асинхронно обрабатывает запрос в нормальном режиме (генерация страницы или потоковая передача файла).
+        /// </summary>
+        /// <param name="context">Контекст HTTP-запроса.</param>
+        /// <param name="clientIp">IP-адрес клиента.</param>
         private static async Task ProcessRequestNormally(HttpListenerContext context, string clientIp)
         {
             var request = context.Request;
@@ -465,6 +544,18 @@ namespace FakeDownloadServer
                 else if (request.Url.AbsolutePath.StartsWith("/download/"))
                 {
                     string sizePart = request.Url.AbsolutePath.Substring("/download/".Length);
+                    
+                    // Защита от path traversal: проверяем, что размер содержит только цифры
+                    if (!System.Text.RegularExpressions.Regex.IsMatch(sizePart, @"^\d+$"))
+                    {
+                        response.StatusCode = (int)HttpStatusCode.BadRequest;
+                        byte[] buffer = Encoding.UTF8.GetBytes("Неверный запрос.");
+                        response.ContentType = "text/plain; charset=utf-8";
+                        response.ContentLength64 = buffer.Length;
+                        await response.OutputStream.WriteAsync(buffer, 0, buffer.Length).ConfigureAwait(false);
+                        return;
+                    }
+                    
                     if (int.TryParse(sizePart, out int megabytes))
                     {
                         long fileSize = megabytes * 1024L * 1024;
@@ -497,6 +588,11 @@ namespace FakeDownloadServer
             // Убрали finally с закрытием – теперь закрытие только в HandleRequestAsync
         }
 
+        /// <summary>
+        /// Проверяет, является ли IP-адрес локальным (localhost, приватные диапазоны IPv4).
+        /// </summary>
+        /// <param name="ip">IP-адрес для проверки.</param>
+        /// <returns>True, если адрес локальный, иначе False.</returns>
         private static bool IsLocalAddress(string ip)
         {
             if (string.IsNullOrEmpty(ip)) return false;
@@ -530,6 +626,10 @@ namespace FakeDownloadServer
             return false;
         }
 
+        /// <summary>
+        /// Генерирует HTML-страницу с списком доступных для загрузки файлов.
+        /// </summary>
+        /// <returns>HTML-строка главной страницы.</returns>
         private static string GenerateIndexPage()
         {
             var sb = new StringBuilder();
@@ -548,6 +648,13 @@ namespace FakeDownloadServer
             return sb.ToString();
         }
 
+        /// <summary>
+        /// Асинхронно передаёт фиктивный файл клиенту с заданным размером и именем.
+        /// </summary>
+        /// <param name="response">HTTP-ответ для отправки данных.</param>
+        /// <param name="totalSize">Общий размер файла в байтах.</param>
+        /// <param name="fileName">Имя файла для заголовка Content-Disposition.</param>
+        /// <param name="request">HTTP-запрос клиента.</param>
         private static async Task StreamFakeFileAsync(HttpListenerResponse response, long totalSize, string fileName, HttpListenerRequest request)
         {
             const int bufferSize = 1 * 1024 * 1024; // 1 МБ
@@ -596,6 +703,11 @@ namespace FakeDownloadServer
             }
         }
 
+        /// <summary>
+        /// Асинхронно получает DNS-имя хоста по IP-адресу.
+        /// </summary>
+        /// <param name="ipAddress">IP-адрес для разрешения.</param>
+        /// <returns>DNS-имя хоста или IP-адрес, если разрешение не удалось.</returns>
         private static async Task<string> GetHostNameAsync(string ipAddress)
         {
             if (string.IsNullOrEmpty(ipAddress)) return string.Empty;
@@ -611,6 +723,11 @@ namespace FakeDownloadServer
             }
         }
 
+        /// <summary>
+        /// Асинхронно получает информацию о клиенте (DNS-имя и IP-адрес).
+        /// </summary>
+        /// <param name="request">HTTP-запрос клиента.</param>
+        /// <returns>Строка с информацией о клиенте в формате "hostname (ip)".</returns>
         private static async Task<string> GetClientInfoAsync(HttpListenerRequest request)
         {
             string userHost = request.RemoteEndPoint?.Address?.ToString() ?? "Unknown";
@@ -618,6 +735,13 @@ namespace FakeDownloadServer
             return $"{hostName} ({userHost})";
         }
 
+        /// <summary>
+        /// Асинхронно логирует информацию о завершённом HTTP-запросе.
+        /// </summary>
+        /// <param name="request">HTTP-запрос.</param>
+        /// <param name="response">HTTP-ответ.</param>
+        /// <param name="startTime">Время начала обработки запроса.</param>
+        /// <param name="description">Описание запроса.</param>
         private static async Task LogRequest(HttpListenerRequest request, HttpListenerResponse response, DateTime startTime, string description)
         {
             try
@@ -632,6 +756,12 @@ namespace FakeDownloadServer
             }
         }
 
+        /// <summary>
+        /// Асинхронно логирует начало загрузки файла.
+        /// </summary>
+        /// <param name="request">HTTP-запрос клиента.</param>
+        /// <param name="fileName">Имя загружаемого файла.</param>
+        /// <param name="fileSize">Размер файла в байтах.</param>
         private static async Task LogDownloadStart(HttpListenerRequest request, string fileName, long fileSize)
         {
             try
@@ -645,6 +775,13 @@ namespace FakeDownloadServer
             }
         }
 
+        /// <summary>
+        /// Асинхронно логирует завершение загрузки файла с расчётом скорости.
+        /// </summary>
+        /// <param name="request">HTTP-запрос клиента.</param>
+        /// <param name="fileName">Имя загруженного файла.</param>
+        /// <param name="fileSize">Размер файла в байтах.</param>
+        /// <param name="startTime">Время начала загрузки.</param>
         private static async Task LogDownloadEnd(HttpListenerRequest request, string fileName, long fileSize, DateTime startTime)
         {
             try
@@ -660,6 +797,10 @@ namespace FakeDownloadServer
             }
         }
 
+        /// <summary>
+        /// Логирует сообщение в консоль и файл журнала.
+        /// </summary>
+        /// <param name="message">Сообщение для логирования.</param>
         private static void Log(string message)
         {
             string consoleMessage = $"[{DateTime.Now:HH:mm:ss}] {message}";
@@ -670,6 +811,10 @@ namespace FakeDownloadServer
             }
         }
 
+        /// <summary>
+        /// Выводит сообщение в консоль и логирует в файл (без временной метки в консоли).
+        /// </summary>
+        /// <param name="message">Сообщение для вывода.</param>
         private static void Print(string message)
         {
             Console.WriteLine(message);
@@ -679,6 +824,10 @@ namespace FakeDownloadServer
             }
         }
 
+        /// <summary>
+        /// Логирует сообщение только в файл журнала.
+        /// </summary>
+        /// <param name="message">Сообщение для логирования.</param>
         private static void LogToFile(string message)
         {
             try
@@ -694,6 +843,11 @@ namespace FakeDownloadServer
             }
         }
 
+        /// <summary>
+        /// Логирует сообщение об ошибке в консоль и файл журнала с деталями исключения.
+        /// </summary>
+        /// <param name="message">Описание ошибки.</param>
+        /// <param name="ex">Объект исключения.</param>
         private static void LogErrorToFile(string message, Exception ex)
         {
             try
@@ -711,6 +865,9 @@ namespace FakeDownloadServer
             }
         }
 
+        /// <summary>
+        /// Менеджер банов IP-адресов. Управляет списком забаненных клиентов, отслеживает подозрительную активность.
+        /// </summary>
         class BanManager
         {
             private readonly string _banFile;
@@ -718,12 +875,21 @@ namespace FakeDownloadServer
             private readonly Dictionary<string, ClientTracking> _clientTracking = new Dictionary<string, ClientTracking>();
             private readonly object _lock = new object();
 
+            /// <summary>
+            /// Инициализирует менеджер банов, загружая список банов из файла.
+            /// </summary>
+            /// <param name="banFile">Путь к файлу со списком банов.</param>
             public BanManager(string banFile)
             {
                 _banFile = banFile;
                 LoadBans();
             }
 
+            /// <summary>
+            /// Проверяет, забанен ли указанный IP-адрес.
+            /// </summary>
+            /// <param name="ip">IP-адрес для проверки.</param>
+            /// <returns>True, если IP забанен и срок бана не истёк, иначе False.</returns>
             public bool IsBanned(string ip)
             {
                 lock (_lock)
@@ -743,6 +909,11 @@ namespace FakeDownloadServer
                 }
             }
 
+            /// <summary>
+            /// Банит указанный IP-адрес на заданный срок.
+            /// </summary>
+            /// <param name="ip">IP-адрес для блокировки.</param>
+            /// <param name="duration">Продолжительность бана.</param>
             public void BanClient(string ip, TimeSpan duration)
             {
                 lock (_lock)
@@ -752,6 +923,11 @@ namespace FakeDownloadServer
                 }
             }
 
+            /// <summary>
+            /// Получает или создаёт объект отслеживания активности для указанного IP.
+            /// </summary>
+            /// <param name="ip">IP-адрес клиента.</param>
+            /// <returns>Объект ClientTracking для отслеживания активности.</returns>
             public ClientTracking GetOrCreateClientTracking(string ip)
             {
                 lock (_lock)
@@ -765,6 +941,9 @@ namespace FakeDownloadServer
                 }
             }
 
+            /// <summary>
+            /// Загружает список банов из файла.
+            /// </summary>
             private void LoadBans()
             {
                 try
@@ -787,6 +966,11 @@ namespace FakeDownloadServer
                     Console.WriteLine($"Ошибка загрузки файла банов: {ex.Message}");
                 }
             }
+
+            /// <summary>
+            /// Разбанивает указанный IP-адрес, удаляя его из списка банов.
+            /// </summary>
+            /// <param name="ip">IP-адрес для разбана.</param>
             public void UnbanClient(string ip)
             {
                 lock (_lock)
@@ -798,6 +982,10 @@ namespace FakeDownloadServer
                     }
                 }
             }
+
+            /// <summary>
+            /// Сохраняет текущий список банов в файл.
+            /// </summary>
             private void SaveBans()
             {
                 try
@@ -811,7 +999,10 @@ namespace FakeDownloadServer
                 }
             }
 
-            // Очистка старых записей отслеживания для предотвращения утечки памяти
+            /// <summary>
+            /// Очищает старые записи отслеживания активности для предотвращения утечки памяти.
+            /// </summary>
+            /// <param name="maxAgeMinutes">Максимальный возраст записей в минутах (по умолчанию 60).</param>
             public void CleanupOldTracking(int maxAgeMinutes = 60)
             {
                 lock (_lock)
@@ -841,8 +1032,12 @@ namespace FakeDownloadServer
             }
         }
 
+        /// <summary>
+        /// Класс для отслеживания активности клиента (счетчики ошибок и т.д.).
+        /// </summary>
         class ClientTracking
         {
+            /// <summary>Счётчик недопустимых запросов от клиента.</summary>
             public int BadRequestCount { get; set; }
         }
     }
