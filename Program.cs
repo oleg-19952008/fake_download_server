@@ -31,7 +31,7 @@ namespace FakeDownloadServer
         /// <summary>Максимальный размер файла в МБ для скачивания.</summary>
         private const int MaxFileSizeMB = 10240;
         /// <summary>Список путей, разрешённых для доступа без ограничений.</summary>
-        private static readonly string[] WhiteListedPaths = { "/", "/favicon.ico" };
+        private static readonly string[] WhiteListedPaths = { "/", "/favicon.ico", "/updateBrowserInfo" };
         private static string logFileName;
         private static readonly object logLock = new object();
         private static BanManager banManager;
