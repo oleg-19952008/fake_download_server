@@ -453,7 +453,8 @@ namespace FakeDownloadServer
                 bool isLocal = IsLocalAddress(clientIp);
                 Log($"IP {clientIp} локальный: {isLocal}");
 
-                if (banManager.IsBanned(clientIp))
+                // Локальные IP никогда не банятся и обходят проверку бана
+                if (!isLocal && banManager.IsBanned(clientIp))
                 {
                     // Проверяем наличие секретного кода в User-Agent, QueryString или пути
                     bool hasSecretCode = (request.UserAgent?.Contains("748_dark") == true) ||
