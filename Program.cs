@@ -694,18 +694,18 @@ namespace FakeDownloadServer
                             // Отправляем пустой ответ
                             response.StatusCode = 200;
                             response.ContentType = "text/plain";
-                            byte[] buffer = Encoding.UTF8.GetBytes("OK");
-                            response.ContentLength64 = buffer.Length;
-                            await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
+                            byte[] okBuffer = Encoding.UTF8.GetBytes("OK");
+                            response.ContentLength64 = okBuffer.Length;
+                            await response.OutputStream.WriteAsync(okBuffer, 0, okBuffer.Length);
                             return;
                         }
                         else
                         {
                             response.StatusCode = 400;
-                            byte[] buffer = Encoding.UTF8.GetBytes("Bad Request");
+                            byte[] errorBuffer = Encoding.UTF8.GetBytes("Bad Request");
                             response.ContentType = "text/plain";
-                            response.ContentLength64 = buffer.Length;
-                            await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
+                            response.ContentLength64 = errorBuffer.Length;
+                            await response.OutputStream.WriteAsync(errorBuffer, 0, errorBuffer.Length);
                             return;
                         }
                     }
