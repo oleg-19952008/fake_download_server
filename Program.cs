@@ -293,7 +293,7 @@ namespace FakeDownloadServer
                         try
                         {
                             await Task.Delay(60000, serverCts.Token); // Каждую минуту
-                            banManager?.CleanupOldTracking(60);
+                            banManager?.CleanupOldTracking(2);
                         }
                         catch (TaskCanceledException) { break; }
                         catch (Exception ex) { LogErrorToFile("Ошибка очистки tracking", ex); }
@@ -515,8 +515,8 @@ namespace FakeDownloadServer
 
                     if (clientTracking.BadRequestCount >= 1)
                     {
-                        banManager.BanClient(clientIp, TimeSpan.FromDays(36500));
-                        Log($"КЛИЕНТ ЗАБАНЕН: {clientIp} на 100 лет (защита от переполнения)");
+                        banManager.BanClient(clientIp, TimeSpan.FromMinutes(2));
+                        Log($"КЛИЕНТ ЗАБАНЕН: {clientIp} на 2 минуты");
 
                         response.StatusCode = 403;
                         byte[] buffer = Encoding.UTF8.GetBytes("Доступ запрещён.");
