@@ -509,7 +509,27 @@ namespace FakeDownloadServer
                 }
 
                 string requestPath = request.Url.AbsolutePath;
-                if (!IsWhiteListed(requestPath))
+                
+                // Специальная обработка пути /download/: проверяем диапазон размера файла
+                bool isDownloadPath = false;
+                if (requestPath.StartsWith("/download/"))
+                {
+                    string sizePart = requestPath.Substring("/download/".Length);
+                    
+                    // Защита от path traversal: проверяем, что размер содержит только цифры
+                    if (System.Text.RegularExpressions.Regex.IsMatch(sizePart, @"^\d+$"))
+                    {
+                        if (int.TryParse(sizePart, out int megabytes))
+                        {
+                            if (megabytes >= MinFileSizeMB && megabytes <= MaxFileSizeMB)
+                            {
+                                isDownloadPath = true; // Разрешаем доступ к корректному пути download
+                            }
+                        }
+                    }
+                }
+                
+                if (!IsWhiteListed(requestPath) && !isDownloadPath)
                 {
                     // Для всех IP (включая локальные) бан за запрос вне белого списка
                     var clientTracking = banManager.GetOrCreateClientTracking(clientIp);
