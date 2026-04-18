@@ -689,6 +689,11 @@ namespace FakeDownloadServer
                         
                         if (!string.IsNullOrEmpty(browserName) && !string.IsNullOrEmpty(browserVersion))
                         {
+                            // Сохраняем информацию в отслеживание клиента
+                            var tracking = banManager.GetOrCreateClientTracking(clientIp);
+                            tracking.ClientBrowserName = browserName;
+                            tracking.FullBrowserVersion = browserVersion;
+                            
                             // Сохраняем информацию в лог для отладки
                             Log($"[ClientJS] Браузер: {browserName} {browserVersion} (IP: {clientIp})");
                             
@@ -844,6 +849,13 @@ namespace FakeDownloadServer
             {
                 string os = ParseOSFromUserAgent(request.UserAgent);
                 string browser = ParseBrowserFromUserAgent(request.UserAgent);
+                
+                // Проверяем, есть ли более точная версия от клиента
+                var tracking = banManager.GetOrCreateClientTracking(clientIp);
+                if (!string.IsNullOrEmpty(tracking.ClientBrowserName) && !string.IsNullOrEmpty(tracking.FullBrowserVersion))
+                {
+                    browser = $"{tracking.ClientBrowserName} {tracking.FullBrowserVersion}";
+                }
                 
                 sb.Append("<div class=\"info-box\">")
                   .Append($"<p><strong>Ваш IP:</strong> {clientIp}</p>")
@@ -1402,6 +1414,10 @@ namespace FakeDownloadServer
         {
             /// <summary>Счётчик недопустимых запросов от клиента.</summary>
             public int BadRequestCount { get; set; }
+            /// <summary>Полная версия браузера, полученная с клиента через Client Hints.</summary>
+            public string FullBrowserVersion { get; set; }
+            /// <summary>Имя браузера, полученное с клиента.</summary>
+            public string ClientBrowserName { get; set; }
         }
     }
 }
