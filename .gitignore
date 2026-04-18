@@ -1,1 +1,46 @@
-Nothing should be ignored since only a README.md file was modified and no build artifacts, dependencies, or temporary files were included in the changes.
+```
+# Compiled and build artifacts
+*.exe
+*.dll
+*.so
+*.o
+*.obj
+*.out
+bin/
+obj/
+Debug/
+Release/
+
+# Dependencies
+packages/
+node_modules/
+venv/
+.venv/
+__pycache__/
+*.egg-info/
+
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+
+# Environment
+.env
+.env.local
+*.env.*
+
+# Editors
+.vscode/
+.idea/
+*.userprefs
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Build outputs
+dist/
+build/
+target/
+out/
+```

@@ -41,6 +41,8 @@ namespace FakeDownloadServer
         private static List<string> suspiciousUserAgents = new List<string>();
         private static FileSystemWatcher fileWatcher;
         private static readonly object agentsLock = new object();
+        /// <summary>Список размеров файлов в байтах для генерации главной страницы.</summary>
+        private static readonly List<long> FileSizes = new List<long> { 100 * 1024 * 1024, 200 * 1024 * 1024, 500 * 1024 * 1024, 1000 * 1024 * 1024 };
 
         /// <summary>
         /// Загружает список подозрительных User-Agent из файла suspicious_agents.txt
@@ -654,7 +656,7 @@ namespace FakeDownloadServer
 
                 if (request.Url.AbsolutePath == "/")
                 {
-                    string page = GenerateIndexPage();
+                    string page = GenerateIndexPage(request);
                     byte[] buffer = Encoding.UTF8.GetBytes(page);
 
                     response.ContentType = "text/html; charset=utf-8";
@@ -751,22 +753,131 @@ namespace FakeDownloadServer
         /// Генерирует HTML-страницу с списком доступных для загрузки файлов.
         /// </summary>
         /// <returns>HTML-строка главной страницы.</returns>
-        private static string GenerateIndexPage()
+        private static string GenerateIndexPage(HttpListenerRequest request = null)
         {
             var sb = new StringBuilder();
             sb.Append("<!DOCTYPE html><html lang=\"ru\"><head>")
               .Append("<meta charset=\"utf-8\"/>")
               .Append("<title>Fake Download Server</title></head><body>")
-              .Append("<h1>Фейковые файлы для теста скорости</h1><ul>");
+              .Append("<h1>Фейковые файлы для теста скорости</h1>");
+
+            // Вывод информации о клиенте
+            if (request != null)
+            {
+                string clientIp = request.RemoteEndPoint?.Address?.ToString() ?? "Неизвестно";
+                string os = ParseOSFromUserAgent(request.UserAgent);
+                string browser = ParseBrowserFromUserAgent(request.UserAgent);
+                
+                sb.Append("<div style=\"background:#f0f0f0;padding:10px;margin:10px 0;border-radius:5px;\">")
+                  .Append($"<p><strong>Ваш IP:</strong> {clientIp}</p>")
+                  .Append($"<p><strong>ОС:</strong> {os}</p>")
+                  .Append($"<p><strong>Браузер:</strong> {browser}</p>")
+                  .Append("</div>");
+            }
+
+            sb.Append("<ul>");
 
             foreach (var size in FileSizes)
             {
                 int mb = (int)(size / (1024 * 1024));
-                sb.Append($"<li><a href=\"/download/{mb}\">{mb} МБ</a></li>");
+                string clientIp = request?.RemoteEndPoint?.Address?.ToString() ?? "N/A";
+                sb.Append($"<li><a href=\"/download/{mb}\">{mb} МБ</a> [IP: {clientIp}]</li>");
             }
 
             sb.Append("</ul></body></html>");
             return sb.ToString();
+        }
+
+        /// <summary>
+        /// Определяет операционную систему из User-Agent строки.
+        /// </summary>
+        private static string ParseOSFromUserAgent(string userAgent)
+        {
+            if (string.IsNullOrEmpty(userAgent)) return "Неизвестно";
+            
+            if (userAgent.IndexOf("Windows NT 10.0", StringComparison.OrdinalIgnoreCase) >= 0) return "Windows 10/11";
+            if (userAgent.IndexOf("Windows NT 6.3", StringComparison.OrdinalIgnoreCase) >= 0) return "Windows 8.1";
+            if (userAgent.IndexOf("Windows NT 6.2", StringComparison.OrdinalIgnoreCase) >= 0) return "Windows 8";
+            if (userAgent.IndexOf("Windows NT 6.1", StringComparison.OrdinalIgnoreCase) >= 0) return "Windows 7";
+            if (userAgent.IndexOf("Mac OS X", StringComparison.OrdinalIgnoreCase) >= 0) return "macOS";
+            if (userAgent.IndexOf("Linux", StringComparison.OrdinalIgnoreCase) >= 0) return "Linux";
+            if (userAgent.IndexOf("Android", StringComparison.OrdinalIgnoreCase) >= 0) return "Android";
+            if (userAgent.IndexOf("iPhone", StringComparison.OrdinalIgnoreCase) >= 0) return "iOS (iPhone)";
+            if (userAgent.IndexOf("iPad", StringComparison.OrdinalIgnoreCase) >= 0) return "iOS (iPad)";
+            
+            return "Неизвестно";
+        }
+
+        /// <summary>
+        /// Определяет браузер и его версию из User-Agent строки.
+        /// </summary>
+        private static string ParseBrowserFromUserAgent(string userAgent)
+        {
+            if (string.IsNullOrEmpty(userAgent)) return "Неизвестно";
+            
+            // Chrome (должен быть перед Safari, т.к. Chrome содержит Safari)
+            int chromeIndex = userAgent.IndexOf("Chrome/", StringComparison.OrdinalIgnoreCase);
+            if (chromeIndex >= 0 && userAgent.IndexOf("Edg/") < 0 && userAgent.IndexOf("OPR/") < 0)
+            {
+                string version = ExtractVersion(userAgent, chromeIndex + 7);
+                return $"Google Chrome {version}";
+            }
+            
+            // Edge
+            int edgeIndex = userAgent.IndexOf("Edg/", StringComparison.OrdinalIgnoreCase);
+            if (edgeIndex >= 0)
+            {
+                string version = ExtractVersion(userAgent, edgeIndex + 4);
+                return $"Microsoft Edge {version}";
+            }
+            
+            // Opera
+            int operaIndex = userAgent.IndexOf("OPR/", StringComparison.OrdinalIgnoreCase);
+            if (operaIndex >= 0)
+            {
+                string version = ExtractVersion(userAgent, operaIndex + 4);
+                return $"Opera {version}";
+            }
+            
+            // Firefox
+            int firefoxIndex = userAgent.IndexOf("Firefox/", StringComparison.OrdinalIgnoreCase);
+            if (firefoxIndex >= 0)
+            {
+                string version = ExtractVersion(userAgent, firefoxIndex + 8);
+                return $"Mozilla Firefox {version}";
+            }
+            
+            // Safari (должен быть после Chrome)
+            int safariIndex = userAgent.IndexOf("Version/", StringComparison.OrdinalIgnoreCase);
+            if (safariIndex >= 0 && userAgent.IndexOf("Safari/", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                string version = ExtractVersion(userAgent, safariIndex + 8);
+                return $"Safari {version}";
+            }
+            
+            // IE
+            int ieIndex = userAgent.IndexOf("MSIE ", StringComparison.OrdinalIgnoreCase);
+            if (ieIndex >= 0)
+            {
+                string version = ExtractVersion(userAgent, ieIndex + 5);
+                return $"Internet Explorer {version}";
+            }
+            
+            return "Неизвестно";
+        }
+
+        /// <summary>
+        /// Извлекает номер версии из строки начиная с указанной позиции.
+        /// </summary>
+        private static string ExtractVersion(string userAgent, int startPos)
+        {
+            if (startPos >= userAgent.Length) return "";
+            
+            int endPos = userAgent.IndexOf(' ', startPos);
+            if (endPos < 0) endPos = userAgent.IndexOf(';', startPos);
+            if (endPos < 0) endPos = userAgent.Length;
+            
+            return userAgent.Substring(startPos, endPos - startPos);
         }
 
         /// <summary>
