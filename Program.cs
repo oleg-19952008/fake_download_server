@@ -678,8 +678,38 @@ namespace FakeDownloadServer
             {
                 response.Headers.Add("X-Powered-By", GetRandomHeader());
 
-                if (request.Url.AbsolutePath == "/")
+                if (request.Url.AbsolutePath == "/" || request.Url.AbsolutePath.StartsWith("/updateBrowserInfo"))
                 {
+                    // Обработка запроса на обновление информации о браузере с клиента
+                    if (request.Url.AbsolutePath.StartsWith("/updateBrowserInfo"))
+                    {
+                        string browserName = request.QueryString["name"];
+                        string browserVersion = request.QueryString["version"];
+                        
+                        if (!string.IsNullOrEmpty(browserName) && !string.IsNullOrEmpty(browserVersion))
+                        {
+                            // Сохраняем информацию в лог для отладки
+                            Log($"[ClientJS] Браузер: {browserName} {browserVersion} (IP: {clientIp})");
+                            
+                            // Отправляем пустой ответ
+                            response.StatusCode = 200;
+                            response.ContentType = "text/plain";
+                            byte[] buffer = Encoding.UTF8.GetBytes("OK");
+                            response.ContentLength64 = buffer.Length;
+                            await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
+                            return;
+                        }
+                        else
+                        {
+                            response.StatusCode = 400;
+                            byte[] buffer = Encoding.UTF8.GetBytes("Bad Request");
+                            response.ContentType = "text/plain";
+                            response.ContentLength64 = buffer.Length;
+                            await response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
+                            return;
+                        }
+                    }
+                    
                     string page = GenerateIndexPage(request);
                     byte[] buffer = Encoding.UTF8.GetBytes(page);
 
@@ -830,7 +860,35 @@ namespace FakeDownloadServer
               .Append("<button class=\"download-btn\" onclick=\"downloadFile()\">Скачать</button>")
               .Append("</div>");
 
+            // Скрипт для определения точной версии браузера на клиенте
             sb.Append("<script>")
+              .Append("async function detectBrowserVersion() {")
+              .Append("try {")
+              .Append("if (typeof navigator.userAgentData !== 'undefined' && navigator.userAgentData.getHighEntropyValues) {")
+              .Append("const uaData = await navigator.userAgentData.getHighEntropyValues(['platform', 'platformVersion', 'uaFullVersion', 'fullVersionList']);")
+              .Append("let browserName = 'Unknown';")
+              .Append("let fullVersion = '';")
+              .Append("if (uaData.fullVersionList && uaData.fullVersionList.length > 0) {")
+              .Append("for (let brand of uaData.fullVersionList) {")
+              .Append("if (brand.brand.includes('Chrome') && !brand.brand.includes('Chromium')) { browserName = 'Google Chrome'; fullVersion = brand.version; break; }")
+              .Append("if (brand.brand.includes('Chromium')) { browserName = 'Chromium'; fullVersion = brand.version; break; }")
+              .Append("if (brand.brand.includes('Edge')) { browserName = 'Microsoft Edge'; fullVersion = brand.version; break; }")
+              .Append("if (brand.brand.includes('Opera')) { browserName = 'Opera'; fullVersion = brand.version; break; }")
+              .Append("}")
+              .Append("}")
+              .Append("if (!fullVersion && uaData.uaFullVersion) fullVersion = uaData.uaFullVersion;")
+              .Append("if (browserName !== 'Unknown' && fullVersion) {")
+              .Append("fetch('/updateBrowserInfo?name=' + encodeURIComponent(browserName) + '&version=' + encodeURIComponent(fullVersion));")
+              .Append("}")
+              .Append("} else if (navigator.appVersion) {")
+              .Append("const match = navigator.userAgent.match(/(Chrome|Chromium|Firefox|Safari|Edge|MSIE|Trident)[\\/\\s]([\\d\\.]+)/i);")
+              .Append("if (match && match[1] && match[2]) {")
+              .Append("fetch('/updateBrowserInfo?name=' + encodeURIComponent(match[1]) + '&version=' + encodeURIComponent(match[2]));")
+              .Append("}")
+              .Append("}")
+              .Append("} catch(e) { console.log('Browser detection error:', e); }")
+              .Append("}")
+              .Append("detectBrowserVersion();")
               .Append("function updateSliderValue(value) {")
               .Append("document.getElementById('sliderValue').textContent = value + ' МБ';")
               .Append("}")
