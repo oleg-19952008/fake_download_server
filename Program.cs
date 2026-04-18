@@ -26,8 +26,12 @@ namespace FakeDownloadServer
         private static int nightStartHour = 1;
         /// <summary>Время окончания ночного режима (час).</summary>
         private static int nightEndHour = 6;
+        /// <summary>Минимальный размер файла в МБ для скачивания.</summary>
+        private const int MinFileSizeMB = 1;
+        /// <summary>Максимальный размер файла в МБ для скачивания.</summary>
+        private const int MaxFileSizeMB = 10240;
         /// <summary>Список путей, разрешённых для доступа без ограничений.</summary>
-        private static readonly string[] WhiteListedPaths = { "/", "/favicon.ico", "/download/100", "/download/200", "/download/500", "/download/1000" };
+        private static readonly string[] WhiteListedPaths = { "/", "/favicon.ico" };
         private static string logFileName;
         private static readonly object logLock = new object();
         private static BanManager banManager;
@@ -41,8 +45,8 @@ namespace FakeDownloadServer
         private static List<string> suspiciousUserAgents = new List<string>();
         private static FileSystemWatcher fileWatcher;
         private static readonly object agentsLock = new object();
-        /// <summary>Список размеров файлов в байтах для генерации главной страницы.</summary>
-        private static readonly List<long> FileSizes = new List<long> { 100 * 1024 * 1024, 200 * 1024 * 1024, 500 * 1024 * 1024, 1000 * 1024 * 1024 };
+        /// <summary>Список размеров файлов в байтах для генерации главной страницы (не используется, теперь размеры задаются через JS).</summary>
+        private static readonly List<long> FileSizes = new List<long>();
 
         /// <summary>
         /// Загружает список подозрительных User-Agent из файла suspicious_agents.txt
@@ -681,6 +685,17 @@ namespace FakeDownloadServer
                     
                     if (int.TryParse(sizePart, out int megabytes))
                     {
+                        // Проверка диапазона размера файла
+                        if (megabytes < MinFileSizeMB || megabytes > MaxFileSizeMB)
+                        {
+                            response.StatusCode = (int)HttpStatusCode.BadRequest;
+                            byte[] buffer = Encoding.UTF8.GetBytes($"Размер файла должен быть от {MinFileSizeMB} до {MaxFileSizeMB} МБ");
+                            response.ContentType = "text/plain; charset=utf-8";
+                            response.ContentLength64 = buffer.Length;
+                            await response.OutputStream.WriteAsync(buffer, 0, buffer.Length).ConfigureAwait(false);
+                            return;
+                        }
+                        
                         long fileSize = megabytes * 1024L * 1024;
                         string fileName = $"fake_{megabytes}MB.bin";
 
@@ -756,35 +771,56 @@ namespace FakeDownloadServer
         private static string GenerateIndexPage(HttpListenerRequest request = null)
         {
             var sb = new StringBuilder();
+            string clientIp = request?.RemoteEndPoint?.Address?.ToString() ?? "N/A";
+            
             sb.Append("<!DOCTYPE html><html lang=\"ru\"><head>")
               .Append("<meta charset=\"utf-8\"/>")
-              .Append("<title>Fake Download Server</title></head><body>")
+              .Append("<title>Fake Download Server</title>")
+              .Append("<style>")
+              .Append("body { font-family: Arial, sans-serif; margin: 20px; }")
+              .Append(".info-box { background:#f0f0f0; padding:10px; margin:10px 0; border-radius:5px; }")
+              .Append(".slider-container { margin: 20px 0; }")
+              .Append(".slider-container label { display: block; margin-bottom: 10px; font-weight: bold; }")
+              .Append(".slider-value { font-size: 1.2em; color: #333; margin-left: 10px; }")
+              .Append("input[type=range] { width: 300px; }")
+              .Append(".download-btn { padding: 10px 20px; font-size: 16px; background: #4CAF50; color: white; border: none; cursor: pointer; border-radius: 5px; margin-top: 10px; }")
+              .Append(".download-btn:hover { background: #45a049; }")
+              .Append("</style></head><body>")
               .Append("<h1>Фейковые файлы для теста скорости</h1>");
 
             // Вывод информации о клиенте
             if (request != null)
             {
-                string clientIp = request.RemoteEndPoint?.Address?.ToString() ?? "Неизвестно";
                 string os = ParseOSFromUserAgent(request.UserAgent);
                 string browser = ParseBrowserFromUserAgent(request.UserAgent);
                 
-                sb.Append("<div style=\"background:#f0f0f0;padding:10px;margin:10px 0;border-radius:5px;\">")
+                sb.Append("<div class=\"info-box\">")
                   .Append($"<p><strong>Ваш IP:</strong> {clientIp}</p>")
                   .Append($"<p><strong>ОС:</strong> {os}</p>")
                   .Append($"<p><strong>Браузер:</strong> {browser}</p>")
                   .Append("</div>");
             }
 
-            sb.Append("<ul>");
+            // Интерактивный элемент выбора размера файла
+            sb.Append("<div class=\"slider-container\">")
+              .Append("<label for=\"fileSizeSlider\">Выберите размер файла (МБ): </label>")
+              .Append("<input type=\"range\" id=\"fileSizeSlider\" min=\"1\" max=\"10240\" value=\"100\" oninput=\"updateSliderValue(this.value)\">")
+              .Append("<span id=\"sliderValue\" class=\"slider-value\">100 МБ</span>")
+              .Append("<br>")
+              .Append("<button class=\"download-btn\" onclick=\"downloadFile()\">Скачать</button>")
+              .Append("</div>");
 
-            foreach (var size in FileSizes)
-            {
-                int mb = (int)(size / (1024 * 1024));
-                string clientIp = request?.RemoteEndPoint?.Address?.ToString() ?? "N/A";
-                sb.Append($"<li><a href=\"/download/{mb}\">{mb} МБ</a> [IP: {clientIp}]</li>");
-            }
+            sb.Append("<script>")
+              .Append("function updateSliderValue(value) {")
+              .Append("document.getElementById('sliderValue').textContent = value + ' МБ';")
+              .Append("}")
+              .Append("function downloadFile() {")
+              .Append("var size = document.getElementById('fileSizeSlider').value;")
+              .Append($"window.location.href = '/download/' + size;")
+              .Append("}")
+              .Append("</script>");
 
-            sb.Append("</ul></body></html>");
+            sb.Append("</body></html>");
             return sb.ToString();
         }
 
