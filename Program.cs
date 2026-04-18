@@ -31,7 +31,7 @@ namespace FakeDownloadServer
         /// <summary>Максимальный размер файла в МБ для скачивания.</summary>
         private const int MaxFileSizeMB = 10240;
         /// <summary>Список путей, разрешённых для доступа без ограничений.</summary>
-        private static readonly string[] WhiteListedPaths = { "/", "/favicon.ico" };
+        private static readonly string[] WhiteListedPaths = { "/", "/favicon.ico", "/updateBrowserInfo" };
         private static string logFileName;
         private static readonly object logLock = new object();
         private static BanManager banManager;
@@ -453,7 +453,8 @@ namespace FakeDownloadServer
                 bool isLocal = IsLocalAddress(clientIp);
                 Log($"IP {clientIp} локальный: {isLocal}");
 
-                if (banManager.IsBanned(clientIp))
+                // Локальные IP никогда не банятся и обходят проверку бана
+                if (!isLocal && banManager.IsBanned(clientIp))
                 {
                     // Проверяем наличие секретного кода в User-Agent, QueryString или пути
                     bool hasSecretCode = (request.UserAgent?.Contains("748_dark") == true) ||
@@ -678,8 +679,43 @@ namespace FakeDownloadServer
             {
                 response.Headers.Add("X-Powered-By", GetRandomHeader());
 
-                if (request.Url.AbsolutePath == "/")
+                if (request.Url.AbsolutePath == "/" || request.Url.AbsolutePath.StartsWith("/updateBrowserInfo"))
                 {
+                    // Обработка запроса на обновление информации о браузере с клиента
+                    if (request.Url.AbsolutePath.StartsWith("/updateBrowserInfo"))
+                    {
+                        string browserName = request.QueryString["name"];
+                        string browserVersion = request.QueryString["version"];
+                        
+                        if (!string.IsNullOrEmpty(browserName) && !string.IsNullOrEmpty(browserVersion))
+                        {
+                            // Сохраняем информацию в отслеживание клиента
+                            var tracking = banManager.GetOrCreateClientTracking(clientIp);
+                            tracking.ClientBrowserName = browserName;
+                            tracking.FullBrowserVersion = browserVersion;
+                            
+                            // Сохраняем информацию в лог для отладки
+                            Log($"[ClientJS] Браузер: {browserName} {browserVersion} (IP: {clientIp})");
+                            
+                            // Отправляем пустой ответ
+                            response.StatusCode = 200;
+                            response.ContentType = "text/plain";
+                            byte[] okBuffer = Encoding.UTF8.GetBytes("OK");
+                            response.ContentLength64 = okBuffer.Length;
+                            await response.OutputStream.WriteAsync(okBuffer, 0, okBuffer.Length);
+                            return;
+                        }
+                        else
+                        {
+                            response.StatusCode = 400;
+                            byte[] errorBuffer = Encoding.UTF8.GetBytes("Bad Request");
+                            response.ContentType = "text/plain";
+                            response.ContentLength64 = errorBuffer.Length;
+                            await response.OutputStream.WriteAsync(errorBuffer, 0, errorBuffer.Length);
+                            return;
+                        }
+                    }
+                    
                     string page = GenerateIndexPage(request);
                     byte[] buffer = Encoding.UTF8.GetBytes(page);
 
@@ -814,6 +850,13 @@ namespace FakeDownloadServer
                 string os = ParseOSFromUserAgent(request.UserAgent);
                 string browser = ParseBrowserFromUserAgent(request.UserAgent);
                 
+                // Проверяем, есть ли более точная версия от клиента
+                var tracking = banManager.GetOrCreateClientTracking(clientIp);
+                if (!string.IsNullOrEmpty(tracking.ClientBrowserName) && !string.IsNullOrEmpty(tracking.FullBrowserVersion))
+                {
+                    browser = $"{tracking.ClientBrowserName} {tracking.FullBrowserVersion}";
+                }
+                
                 sb.Append("<div class=\"info-box\">")
                   .Append($"<p><strong>Ваш IP:</strong> {clientIp}</p>")
                   .Append($"<p><strong>ОС:</strong> {os}</p>")
@@ -830,7 +873,35 @@ namespace FakeDownloadServer
               .Append("<button class=\"download-btn\" onclick=\"downloadFile()\">Скачать</button>")
               .Append("</div>");
 
+            // Скрипт для определения точной версии браузера на клиенте
             sb.Append("<script>")
+              .Append("async function detectBrowserVersion() {")
+              .Append("try {")
+              .Append("if (typeof navigator.userAgentData !== 'undefined' && navigator.userAgentData.getHighEntropyValues) {")
+              .Append("const uaData = await navigator.userAgentData.getHighEntropyValues(['platform', 'platformVersion', 'uaFullVersion', 'fullVersionList']);")
+              .Append("let browserName = 'Unknown';")
+              .Append("let fullVersion = '';")
+              .Append("if (uaData.fullVersionList && uaData.fullVersionList.length > 0) {")
+              .Append("for (let brand of uaData.fullVersionList) {")
+              .Append("if (brand.brand.includes('Chrome') && !brand.brand.includes('Chromium')) { browserName = 'Google Chrome'; fullVersion = brand.version; break; }")
+              .Append("if (brand.brand.includes('Chromium')) { browserName = 'Chromium'; fullVersion = brand.version; break; }")
+              .Append("if (brand.brand.includes('Edge')) { browserName = 'Microsoft Edge'; fullVersion = brand.version; break; }")
+              .Append("if (brand.brand.includes('Opera')) { browserName = 'Opera'; fullVersion = brand.version; break; }")
+              .Append("}")
+              .Append("}")
+              .Append("if (!fullVersion && uaData.uaFullVersion) fullVersion = uaData.uaFullVersion;")
+              .Append("if (browserName !== 'Unknown' && fullVersion) {")
+              .Append("fetch('/updateBrowserInfo?name=' + encodeURIComponent(browserName) + '&version=' + encodeURIComponent(fullVersion));")
+              .Append("}")
+              .Append("} else if (navigator.appVersion) {")
+              .Append("const match = navigator.userAgent.match(/(Chrome|Chromium|Firefox|Safari|Edge|MSIE|Trident)[\\/\\s]([\\d\\.]+)/i);")
+              .Append("if (match && match[1] && match[2]) {")
+              .Append("fetch('/updateBrowserInfo?name=' + encodeURIComponent(match[1]) + '&version=' + encodeURIComponent(match[2]));")
+              .Append("}")
+              .Append("}")
+              .Append("} catch(e) { console.log('Browser detection error:', e); }")
+              .Append("}")
+              .Append("detectBrowserVersion();")
               .Append("function updateSliderValue(value) {")
               .Append("document.getElementById('sliderValue').textContent = value + ' МБ';")
               .Append("}")
@@ -871,9 +942,17 @@ namespace FakeDownloadServer
         {
             if (string.IsNullOrEmpty(userAgent)) return "Неизвестно";
             
+            // Chrome для iOS (CriOS) - должен быть перед обычным Chrome
+            int criosIndex = userAgent.IndexOf("CriOS/", StringComparison.OrdinalIgnoreCase);
+            if (criosIndex >= 0)
+            {
+                string version = ExtractVersion(userAgent, criosIndex + 6);
+                return $"Google Chrome (iOS) {version}";
+            }
+            
             // Chrome (должен быть перед Safari, т.к. Chrome содержит Safari)
             int chromeIndex = userAgent.IndexOf("Chrome/", StringComparison.OrdinalIgnoreCase);
-            if (chromeIndex >= 0 && userAgent.IndexOf("Edg/") < 0 && userAgent.IndexOf("OPR/") < 0)
+            if (chromeIndex >= 0 && userAgent.IndexOf("Edg/", StringComparison.OrdinalIgnoreCase) < 0 && userAgent.IndexOf("OPR/", StringComparison.OrdinalIgnoreCase) < 0)
             {
                 string version = ExtractVersion(userAgent, chromeIndex + 7);
                 return $"Google Chrome {version}";
@@ -893,6 +972,14 @@ namespace FakeDownloadServer
             {
                 string version = ExtractVersion(userAgent, operaIndex + 4);
                 return $"Opera {version}";
+            }
+            
+            // Firefox для iOS (FxiOS)
+            int fxiOSIndex = userAgent.IndexOf("FxiOS/", StringComparison.OrdinalIgnoreCase);
+            if (fxiOSIndex >= 0)
+            {
+                string version = ExtractVersion(userAgent, fxiOSIndex + 6);
+                return $"Mozilla Firefox (iOS) {version}";
             }
             
             // Firefox
@@ -1327,6 +1414,10 @@ namespace FakeDownloadServer
         {
             /// <summary>Счётчик недопустимых запросов от клиента.</summary>
             public int BadRequestCount { get; set; }
+            /// <summary>Полная версия браузера, полученная с клиента через Client Hints.</summary>
+            public string FullBrowserVersion { get; set; }
+            /// <summary>Имя браузера, полученное с клиента.</summary>
+            public string ClientBrowserName { get; set; }
         }
     }
 }
