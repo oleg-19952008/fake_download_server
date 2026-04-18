@@ -871,9 +871,17 @@ namespace FakeDownloadServer
         {
             if (string.IsNullOrEmpty(userAgent)) return "Неизвестно";
             
+            // Chrome для iOS (CriOS) - должен быть перед обычным Chrome
+            int criosIndex = userAgent.IndexOf("CriOS/", StringComparison.OrdinalIgnoreCase);
+            if (criosIndex >= 0)
+            {
+                string version = ExtractVersion(userAgent, criosIndex + 6);
+                return $"Google Chrome (iOS) {version}";
+            }
+            
             // Chrome (должен быть перед Safari, т.к. Chrome содержит Safari)
             int chromeIndex = userAgent.IndexOf("Chrome/", StringComparison.OrdinalIgnoreCase);
-            if (chromeIndex >= 0 && userAgent.IndexOf("Edg/") < 0 && userAgent.IndexOf("OPR/") < 0)
+            if (chromeIndex >= 0 && userAgent.IndexOf("Edg/", StringComparison.OrdinalIgnoreCase) < 0 && userAgent.IndexOf("OPR/", StringComparison.OrdinalIgnoreCase) < 0)
             {
                 string version = ExtractVersion(userAgent, chromeIndex + 7);
                 return $"Google Chrome {version}";
@@ -893,6 +901,14 @@ namespace FakeDownloadServer
             {
                 string version = ExtractVersion(userAgent, operaIndex + 4);
                 return $"Opera {version}";
+            }
+            
+            // Firefox для iOS (FxiOS)
+            int fxiOSIndex = userAgent.IndexOf("FxiOS/", StringComparison.OrdinalIgnoreCase);
+            if (fxiOSIndex >= 0)
+            {
+                string version = ExtractVersion(userAgent, fxiOSIndex + 6);
+                return $"Mozilla Firefox (iOS) {version}";
             }
             
             // Firefox
